@@ -13,6 +13,7 @@ class RTCClientImpl(
 ) : RTCClient {
 
     private val TAG = Tags.rtcClientTag
+    private val iceCandidateQueue = mutableListOf<IceCandidate>()
 
     private val mediaConstraint = MediaConstraints().apply {
         mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
@@ -64,13 +65,27 @@ class RTCClientImpl(
             override fun onSetSuccess() {
                 super.onSetSuccess()
                 Log.d(TAG, "🏁 [Action] -> Remote Description Set Successfully")
+                drainIceCandidates()
             }
         }, sessionDescription)
     }
 
+    private fun drainIceCandidates() {
+        Log.d(TAG, "❄️ [Action] -> Draining ${iceCandidateQueue.size} Queued ICE Candidates")
+        iceCandidateQueue.forEach {
+            peerConnection.addIceCandidate(it)
+        }
+        iceCandidateQueue.clear()
+    }
+
     override fun onIceCandidateReceived(iceCandidate: IceCandidate) {
-        Log.d(TAG, "❄️ [Action] -> Adding Remote ICE Candidate")
-        peerConnection.addIceCandidate(iceCandidate)
+        if (peerConnection.remoteDescription == null) {
+            Log.d(TAG, "❄️ [Action] -> Queuing Remote ICE Candidate (RemoteDesc is null)")
+            iceCandidateQueue.add(iceCandidate)
+        } else {
+            Log.d(TAG, "❄️ [Action] -> Adding Remote ICE Candidate")
+            peerConnection.addIceCandidate(iceCandidate)
+        }
     }
 
 

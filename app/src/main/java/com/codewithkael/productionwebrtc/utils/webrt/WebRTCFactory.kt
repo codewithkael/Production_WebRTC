@@ -63,9 +63,13 @@ class WebRTCFactory @Inject constructor(
         val connection = peerConnectionFactory.createPeerConnection(
             PeerConnection.RTCConfiguration(iceServer), observer
         )
-        localVideoTrack?.let { connection?.addTrack(it) }
-        localAudioTrack?.let { connection?.addTrack(it) }
+        connection?.let { addLocalTracks(it) }
         return connection?.let { RTCClientImpl(it, listener) }
+    }
+
+    fun addLocalTracks(peerConnection: PeerConnection) {
+        localVideoTrack?.let { peerConnection.addTrack(it) }
+        localAudioTrack?.let { peerConnection.addTrack(it) }
     }
 
     fun onDestroy() {

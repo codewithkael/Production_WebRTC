@@ -163,7 +163,7 @@ class CallService : Service() {
             Log.d(TAG_WEBRTC, "📩 [Signal] -> Received: ${signalDataModel.type} from ${signalDataModel.participantId}")
             when (signalDataModel.type) {
                 SignalDataModelTypes.INCOMING_CALL -> handleIncomingCall(signalDataModel)
-                SignalDataModelTypes.ACCEPT_CALL -> handleAcceptCall()
+                SignalDataModelTypes.ACCEPT_CALL -> handleAcceptCall(signalDataModel)
                 SignalDataModelTypes.OFFER -> handleReceivedOfferSdp(signalDataModel)
                 SignalDataModelTypes.ANSWER -> handleReceivedAnswerSdp(signalDataModel)
                 SignalDataModelTypes.ICE -> handleReceivedIceCandidate(signalDataModel)
@@ -172,8 +172,9 @@ class CallService : Service() {
         }
     }
 
-    private fun handleAcceptCall() {
-        Log.d(TAG_WEBRTC, "🤝 [Flow] -> Call Accepted. Initiating WebRTC Handshake...")
+    private fun handleAcceptCall(signalDataModel: SignalDataModel) {
+        Log.d(TAG_WEBRTC, "🤝 [Flow] -> Call Accepted by ${signalDataModel.participantId}. Initiating WebRTC Handshake...")
+        this.participantId = signalDataModel.participantId
         setupRtcConnection(participantId)?.also {
             it.offer()
         }
@@ -228,7 +229,8 @@ class CallService : Service() {
     }
 
     private fun handleReceivedOfferSdp(signalDataModel: SignalDataModel) {
-        Log.d(TAG_WEBRTC, "📝 [Signal] -> Processing Remote OFFER SDP")
+        Log.d(TAG_WEBRTC, "📝 [Signal] -> Processing Remote OFFER SDP from ${signalDataModel.participantId}")
+        this.participantId = signalDataModel.participantId
         serviceScope.launch {
             callState.emit(true)
         }
@@ -322,6 +324,11 @@ class CallService : Service() {
     fun startLocalStream(surface: SurfaceViewRenderer) {
         Log.d(TAG_WEBRTC, "🎥 [Action] -> Starting Local Stream")
         webRTCFactory.prepareLocalStream(surface)
+        // If connection already exists, add tracks now that they are ready
+        rtcClient?.let {
+            Log.d(TAG_WEBRTC, "🎥 [Action] -> Adding tracks to existing PeerConnection")
+            webRTCFactory.addLocalTracks(it.peerConnection)
+        }
     }
 
     fun initRemoteSurfaceView(remoteSurface: SurfaceViewRenderer) {
