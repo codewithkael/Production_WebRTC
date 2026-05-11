@@ -8,6 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -30,7 +34,9 @@ import com.google.gson.Gson
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.webrtc.IceCandidate
@@ -59,11 +65,38 @@ class CallService : Service() {
     private var remoteSurface: SurfaceViewRenderer? = null
     private var remoteStream: MediaStream? = null
 
+    private var isCaller = false
+    private var reconnectionJob: Job? = null
+    private var wasEstablished = false
+
     val callState: MutableStateFlow<Boolean> = MutableStateFlow(false)
+    val connectionState: MutableStateFlow<ConnectionState> = MutableStateFlow(ConnectionState.IDLE)
 
     //service section
     private lateinit var mainNotification: NotificationCompat.Builder
     private lateinit var notificationManager: NotificationManager
+    private lateinit var connectivityManager: ConnectivityManager
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            super.onAvailable(network)
+            Log.d(TAG_WEBRTC, "🌐 [Network] -> Available. Checking connection persistence...")
+            // Only trigger reconnection if we were already connected and lost it
+            if (callState.value && (connectionState.value == ConnectionState.RECONNECTING || !wasEstablished)) {
+                handleNetworkChange()
+            }
+        }
+
+        override fun onLost(network: Network) {
+            super.onLost(network)
+            Log.d(TAG_WEBRTC, "🌐 [Network] -> Lost. Connection might drop.")
+            if (callState.value && connectionState.value == ConnectionState.CONNECTED) {
+                serviceScope.launch {
+                    connectionState.emit(if (wasEstablished) ConnectionState.RECONNECTING else ConnectionState.CONNECTING)
+                }
+            }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG_WEBRTC, "⚙️ [Service] -> onStartCommand action: ${intent?.action}")
@@ -83,12 +116,14 @@ class CallService : Service() {
             isServiceRunning = true
             startServiceWithNotification()
             observeIncomingSignals()
+            registerNetworkCallback()
         }
     }
 
     private fun handleStopService() {
         Log.d(TAG_WEBRTC, "🛑 [Service] -> Stopping CallService...")
         isServiceRunning = false
+        unregisterNetworkCallback()
         rtcClient?.onDestroy()
         rtcClient = null
         firebaseClient.clear()
@@ -101,8 +136,55 @@ class CallService : Service() {
         super.onCreate()
         Log.d(TAG_WEBRTC, "✨ [Service] -> CallService Created")
         notificationManager = getSystemService(NotificationManager::class.java)
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
         createNotifications()
         rtcAudioManager.setDefaultAudioDevice(RTCAudioManager.AudioDevice.SPEAKER_PHONE)
+    }
+
+    private fun registerNetworkCallback() {
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        connectivityManager.registerNetworkCallback(request, networkCallback)
+    }
+
+    private fun unregisterNetworkCallback() {
+        runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+    }
+
+    private fun handleNetworkChange() {
+        serviceScope.launch {
+            Log.d(TAG_WEBRTC, "♻️ [Persistence] -> Network available. Initiating ICE Restart.")
+            startIceRestart()
+        }
+    }
+
+    private fun startIceRestart() {
+        if (!callState.value || rtcClient == null || connectionState.value == ConnectionState.CONNECTED) return
+        
+        serviceScope.launch {
+            connectionState.emit(if (wasEstablished) ConnectionState.RECONNECTING else ConnectionState.CONNECTING)
+            if (isCaller) {
+                Log.d(TAG_WEBRTC, "📤 [Persistence] -> Sending ICE Restart Offer...")
+                rtcClient?.offer(iceRestart = true)
+            } else {
+                Log.d(TAG_WEBRTC, "⏳ [Persistence] -> Callee side. Waiting for Caller to initiate ICE Restart.")
+                delay(10000)
+                if (connectionState.value == ConnectionState.RECONNECTING || connectionState.value == ConnectionState.CONNECTING) {
+                    Log.w(TAG_WEBRTC, "⚠️ [Persistence] -> Caller didn't restart ICE. Recreating RTC client.")
+                    recreateRtcClient()
+                }
+            }
+        }
+    }
+
+    private fun recreateRtcClient() {
+        if (!callState.value || participantId.isEmpty()) return
+        Log.d(TAG_WEBRTC, "🏗️ [Persistence] -> Recreating RTC Client for Persistence")
+        setupRtcConnection(participantId)
+        if (isCaller) {
+            rtcClient?.offer()
+        }
     }
 
     private fun startServiceWithNotification() {
@@ -122,7 +204,7 @@ class CallService : Service() {
     private fun createNotifications() {
         val callChannel = NotificationChannel(
             CALL_NOTIFICATION_CHANNEL_ID,
-            CALL_NOTIFICATION_CHANNEL_ID,
+            "Call Channel",
             NotificationManager.IMPORTANCE_HIGH
         )
         notificationManager.createNotificationChannel(callChannel)
@@ -157,7 +239,6 @@ class CallService : Service() {
             .setContentIntent(contentPendingIntent)
     }
 
-    // WebRTC logic moved from ViewModel
     private fun observeIncomingSignals() {
         firebaseClient.observeIncomingSignals { signalDataModel ->
             Log.d(TAG_WEBRTC, "📩 [Signal] -> Received: ${signalDataModel.type} from ${signalDataModel.participantId}")
@@ -173,8 +254,13 @@ class CallService : Service() {
     }
 
     private fun handleAcceptCall(signalDataModel: SignalDataModel) {
-        Log.d(TAG_WEBRTC, "🤝 [Flow] -> Call Accepted by ${signalDataModel.participantId}. Initiating WebRTC Handshake...")
+        Log.d(TAG_WEBRTC, "🤝 [Flow] -> Call Accepted by ${signalDataModel.participantId}. Initiating Handshake...")
         this.participantId = signalDataModel.participantId
+        isCaller = true
+        wasEstablished = false
+        serviceScope.launch {
+            connectionState.emit(ConnectionState.CONNECTING)
+        }
         setupRtcConnection(participantId)?.also {
             it.offer()
         }
@@ -183,8 +269,11 @@ class CallService : Service() {
     fun sendStartCallSignal(participantId: String) {
         Log.d(TAG_WEBRTC, "📞 [Flow] -> Starting Call with $participantId")
         this.participantId = participantId
+        isCaller = true
+        wasEstablished = false
         serviceScope.launch {
             callState.emit(true)
+            connectionState.emit(ConnectionState.CONNECTING)
         }
         serviceScope.launch {
             firebaseClient.updateParticipantDataModel(
@@ -198,8 +287,11 @@ class CallService : Service() {
     private fun handleIncomingCall(dataModel: SignalDataModel) {
         Log.d(TAG_WEBRTC, "🔔 [Flow] -> Incoming Call Request from ${dataModel.participantId}")
         this.participantId = dataModel.participantId
+        isCaller = false
+        wasEstablished = false
         serviceScope.launch {
             callState.emit(true)
+            connectionState.emit(ConnectionState.CONNECTING)
         }
         serviceScope.launch {
             firebaseClient.updateParticipantDataModel(
@@ -211,7 +303,6 @@ class CallService : Service() {
     }
 
     private fun handleReceivedIceCandidate(signalDataModel: SignalDataModel) {
-        Log.d(TAG_WEBRTC, "❄️ [Signal] -> Processing Remote ICE Candidate")
         runCatching {
             gson.fromJson(signalDataModel.data.toString(), IceCandidate::class.java)
         }.onSuccess {
@@ -222,17 +313,19 @@ class CallService : Service() {
     }
 
     private fun handleReceivedAnswerSdp(signalDataModel: SignalDataModel) {
-        Log.d(TAG_WEBRTC, "📝 [Signal] -> Processing Remote ANSWER SDP")
         rtcClient?.onRemoteSessionReceived(
             SessionDescription(SessionDescription.Type.ANSWER, signalDataModel.data.toString())
         )
     }
 
     private fun handleReceivedOfferSdp(signalDataModel: SignalDataModel) {
-        Log.d(TAG_WEBRTC, "📝 [Signal] -> Processing Remote OFFER SDP from ${signalDataModel.participantId}")
         this.participantId = signalDataModel.participantId
         serviceScope.launch {
             callState.emit(true)
+            if (connectionState.value == ConnectionState.IDLE) {
+                wasEstablished = false
+                connectionState.emit(ConnectionState.CONNECTING)
+            }
         }
         setupRtcConnection(participantId)?.also {
             it.onRemoteSessionReceived(
@@ -262,8 +355,6 @@ class CallService : Service() {
                         Log.d(TAG_WEBRTC, "📺 [Flow] -> Remote MediaStream received: ${it.id}")
                         remoteSurface?.let { surface ->
                             it.videoTracks[0]?.addSink(surface)
-                        } ?: run {
-                            Log.w(TAG_WEBRTC, "⚠️ [Flow] -> Remote surface NOT ready for sink")
                         }
                     }
                 }
@@ -271,16 +362,36 @@ class CallService : Service() {
 
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
                 super.onConnectionChange(newState)
-                if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
-                    Log.d(TAG_WEBRTC, "✅ [Flow] -> WebRTC Connected! Cleaning up signaling data.")
-                    serviceScope.launch {
-                        firebaseClient.removeSelfData()
+                Log.d(TAG_WEBRTC, "🔌 [Persistence] -> Connection State: $newState")
+                when(newState) {
+                    PeerConnection.PeerConnectionState.CONNECTING -> {
+                        serviceScope.launch {
+                            if (connectionState.value == ConnectionState.IDLE) {
+                                connectionState.emit(ConnectionState.CONNECTING)
+                            }
+                        }
                     }
+                    PeerConnection.PeerConnectionState.CONNECTED -> {
+                        serviceScope.launch {
+                            wasEstablished = true
+                            connectionState.emit(ConnectionState.CONNECTED)
+                            firebaseClient.removeSelfData()
+                        }
+                        reconnectionJob?.cancel()
+                    }
+                    PeerConnection.PeerConnectionState.DISCONNECTED -> {
+                        Log.w(TAG_WEBRTC, "⚠️ [Persistence] -> Connection Disconnected. Starting Reconnection Timer.")
+                        startReconnectionTimer()
+                    }
+                    PeerConnection.PeerConnectionState.FAILED -> {
+                        Log.e(TAG_WEBRTC, "❌ [Persistence] -> Connection Failed. Triggering immediate ICE Restart.")
+                        startIceRestart()
+                    }
+                    else -> Unit
                 }
             }
         }, listener = object : RTCClientImpl.TransferDataToServerCallback {
             override fun onIceGenerated(iceCandidate: IceCandidate) {
-                Log.d(TAG_WEBRTC, "📤 [Signal] -> Sending Local ICE Candidate")
                 serviceScope.launch {
                     firebaseClient.updateParticipantDataModel(
                         participantId = participant, data = SignalDataModel(
@@ -293,7 +404,6 @@ class CallService : Service() {
             }
 
             override fun onOfferGenerated(sessionDescription: SessionDescription) {
-                Log.d(TAG_WEBRTC, "📤 [Signal] -> Sending Local OFFER SDP")
                 serviceScope.launch {
                     firebaseClient.updateParticipantDataModel(
                         participantId = participant, data = SignalDataModel(
@@ -306,7 +416,6 @@ class CallService : Service() {
             }
 
             override fun onAnswerGenerated(sessionDescription: SessionDescription) {
-                Log.d(TAG_WEBRTC, "📤 [Signal] -> Sending Local ANSWER SDP")
                 serviceScope.launch {
                     firebaseClient.updateParticipantDataModel(
                         participantId = participant, data = SignalDataModel(
@@ -321,30 +430,35 @@ class CallService : Service() {
         return rtcClient
     }
 
+    private fun startReconnectionTimer() {
+        reconnectionJob?.cancel()
+        reconnectionJob = serviceScope.launch {
+            Log.d(TAG_WEBRTC, "⏳ [Persistence] -> Disconnected. Waiting 5s for auto-reconnect...")
+            connectionState.emit(if (wasEstablished) ConnectionState.RECONNECTING else ConnectionState.CONNECTING)
+            delay(5000)
+            if (connectionState.value == ConnectionState.RECONNECTING || connectionState.value == ConnectionState.CONNECTING) {
+                Log.d(TAG_WEBRTC, "♻️ [Persistence] -> Still disconnected. Triggering ICE Restart.")
+                startIceRestart()
+            }
+        }
+    }
+
     fun startLocalStream(surface: SurfaceViewRenderer) {
-        Log.d(TAG_WEBRTC, "🎥 [Action] -> Starting Local Stream")
         webRTCFactory.prepareLocalStream(surface)
-        // If connection already exists, add tracks now that they are ready
         rtcClient?.let {
-            Log.d(TAG_WEBRTC, "🎥 [Action] -> Adding tracks to existing PeerConnection")
             webRTCFactory.addLocalTracks(it.peerConnection)
         }
     }
 
     fun initRemoteSurfaceView(remoteSurface: SurfaceViewRenderer) {
-        Log.d(TAG_WEBRTC, "🖼️ [Action] -> Initializing Remote SurfaceView")
         this.remoteSurface = remoteSurface
         webRTCFactory.initSurfaceView(remoteSurface)
         remoteStream?.let {
-            Log.d(TAG_WEBRTC, "📺 [Action] -> Attaching existing Remote Stream to new Surface")
             it.videoTracks[0]?.addSink(remoteSurface)
         }
     }
 
-    fun switchCamera() {
-        Log.d(TAG_WEBRTC, "🔄 [Action] -> Switching Camera")
-        webRTCFactory.switchCamera()
-    }
+    fun switchCamera() = webRTCFactory.switchCamera()
 
     inner class CallServiceBinder : Binder() {
         fun getService(): CallService = this@CallService

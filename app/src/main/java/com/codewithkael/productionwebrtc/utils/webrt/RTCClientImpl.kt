@@ -22,8 +22,15 @@ class RTCClientImpl(
 
     override val peerConnection: PeerConnection = connection
 
-    override fun offer() {
-        Log.d(TAG, "🚀 [Action] -> Creating Offer...")
+    override fun offer(iceRestart: Boolean) {
+        val constraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            if (iceRestart) {
+                mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
+            }
+        }
+        Log.d(TAG, "🚀 [Action] -> Creating Offer (iceRestart=$iceRestart)...")
         peerConnection.createOffer(object : MySdpObserver() {
             override fun onCreateSuccess(desc: SessionDescription?) {
                 super.onCreateSuccess(desc)
@@ -38,7 +45,7 @@ class RTCClientImpl(
                     transferListener.onOfferGenerated(desc)
                 }
             }
-        }, mediaConstraint)
+        }, constraints)
     }
 
     override fun answer() {
