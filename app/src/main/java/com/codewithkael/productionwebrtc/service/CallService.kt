@@ -20,7 +20,7 @@ import com.codewithkael.productionwebrtc.remote.firebase.SignalDataModel
 import com.codewithkael.productionwebrtc.remote.firebase.SignalDataModelTypes
 import com.codewithkael.productionwebrtc.ui.MainActivity
 import com.codewithkael.productionwebrtc.utils.MyApplication
-import com.codewithkael.productionwebrtc.utils.MyApplication.Companion.TAG
+import com.codewithkael.productionwebrtc.utils.Tags
 import com.codewithkael.productionwebrtc.utils.webrt.MyPeerObserver
 import com.codewithkael.productionwebrtc.utils.webrt.RTCAudioManager
 import com.codewithkael.productionwebrtc.utils.webrt.RTCClient
@@ -50,6 +50,7 @@ class CallService : Service() {
     @Inject
     lateinit var gson: Gson
 
+    private val TAG_WEBRTC = Tags.serviceTag
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var rtcClient: RTCClient? = null
     private val rtcAudioManager by lazy { RTCAudioManager.create(this) }
@@ -65,6 +66,7 @@ class CallService : Service() {
     private lateinit var notificationManager: NotificationManager
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG_WEBRTC, "⚙️ [Service] -> onStartCommand action: ${intent?.action}")
         intent?.let {
             when (it.action) {
                 CallServiceActions.START.name -> handleStartService()
@@ -77,6 +79,7 @@ class CallService : Service() {
 
     private fun handleStartService() {
         if (!isServiceRunning) {
+            Log.d(TAG_WEBRTC, "🚀 [Service] -> Starting CallService...")
             isServiceRunning = true
             startServiceWithNotification()
             observeIncomingSignals()
@@ -84,6 +87,7 @@ class CallService : Service() {
     }
 
     private fun handleStopService() {
+        Log.d(TAG_WEBRTC, "🛑 [Service] -> Stopping CallService...")
         isServiceRunning = false
         rtcClient?.onDestroy()
         rtcClient = null
@@ -95,12 +99,14 @@ class CallService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.d(TAG_WEBRTC, "✨ [Service] -> CallService Created")
         notificationManager = getSystemService(NotificationManager::class.java)
         createNotifications()
         rtcAudioManager.setDefaultAudioDevice(RTCAudioManager.AudioDevice.SPEAKER_PHONE)
     }
 
     private fun startServiceWithNotification() {
+        Log.d(TAG_WEBRTC, "🔔 [Service] -> startServiceWithNotification")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             startForeground(
                 MAIN_NOTIFICATION_ID,
@@ -154,6 +160,7 @@ class CallService : Service() {
     // WebRTC logic moved from ViewModel
     private fun observeIncomingSignals() {
         firebaseClient.observeIncomingSignals { signalDataModel ->
+            Log.d(TAG_WEBRTC, "📩 [Signal] -> Received: ${signalDataModel.type} from ${signalDataModel.participantId}")
             when (signalDataModel.type) {
                 SignalDataModelTypes.INCOMING_CALL -> handleIncomingCall(signalDataModel)
                 SignalDataModelTypes.ACCEPT_CALL -> handleAcceptCall()
@@ -166,12 +173,14 @@ class CallService : Service() {
     }
 
     private fun handleAcceptCall() {
+        Log.d(TAG_WEBRTC, "🤝 [Flow] -> Call Accepted. Initiating WebRTC Handshake...")
         setupRtcConnection(participantId)?.also {
             it.offer()
         }
     }
 
     fun sendStartCallSignal(participantId: String) {
+        Log.d(TAG_WEBRTC, "📞 [Flow] -> Starting Call with $participantId")
         this.participantId = participantId
         serviceScope.launch {
             callState.emit(true)
@@ -186,6 +195,7 @@ class CallService : Service() {
     }
 
     private fun handleIncomingCall(dataModel: SignalDataModel) {
+        Log.d(TAG_WEBRTC, "🔔 [Flow] -> Incoming Call Request from ${dataModel.participantId}")
         this.participantId = dataModel.participantId
         serviceScope.launch {
             callState.emit(true)
@@ -200,22 +210,25 @@ class CallService : Service() {
     }
 
     private fun handleReceivedIceCandidate(signalDataModel: SignalDataModel) {
+        Log.d(TAG_WEBRTC, "❄️ [Signal] -> Processing Remote ICE Candidate")
         runCatching {
             gson.fromJson(signalDataModel.data.toString(), IceCandidate::class.java)
         }.onSuccess {
             rtcClient?.onIceCandidateReceived(it)
         }.onFailure {
-            Log.d(TAG, "handleReceivedIceCandidate: ${it.message}")
+            Log.e(TAG_WEBRTC, "❌ [Signal] -> Error parsing ICE Candidate: ${it.message}")
         }
     }
 
     private fun handleReceivedAnswerSdp(signalDataModel: SignalDataModel) {
+        Log.d(TAG_WEBRTC, "📝 [Signal] -> Processing Remote ANSWER SDP")
         rtcClient?.onRemoteSessionReceived(
             SessionDescription(SessionDescription.Type.ANSWER, signalDataModel.data.toString())
         )
     }
 
     private fun handleReceivedOfferSdp(signalDataModel: SignalDataModel) {
+        Log.d(TAG_WEBRTC, "📝 [Signal] -> Processing Remote OFFER SDP")
         serviceScope.launch {
             callState.emit(true)
         }
@@ -228,26 +241,27 @@ class CallService : Service() {
     }
 
     private fun setupRtcConnection(participant: String): RTCClient? {
+        Log.d(TAG_WEBRTC, "🏗️ [Flow] -> Setting up PeerConnection for $participant")
         runCatching { rtcClient?.onDestroy() }
         rtcClient = null
         rtcClient = webRTCFactory.createRTCClient(observer = object : MyPeerObserver() {
-            override fun onIceCandidate(p0: IceCandidate?) {
-                super.onIceCandidate(p0)
-                p0?.let {
+            override fun onIceCandidate(candidate: IceCandidate?) {
+                super.onIceCandidate(candidate)
+                candidate?.let {
                     rtcClient?.onLocalIceCandidateGenerated(it)
                 }
             }
 
-            override fun onAddStream(p0: MediaStream?) {
-                super.onAddStream(p0)
-                p0?.let {
+            override fun onAddStream(stream: MediaStream?) {
+                super.onAddStream(stream)
+                stream?.let {
                     remoteStream = it
                     runCatching {
-                        Log.d(TAG, "onAddStream: $it")
+                        Log.d(TAG_WEBRTC, "📺 [Flow] -> Remote MediaStream received: ${it.id}")
                         remoteSurface?.let { surface ->
                             it.videoTracks[0]?.addSink(surface)
                         } ?: run {
-                            Log.d(TAG, "onAddStream: null surface")
+                            Log.w(TAG_WEBRTC, "⚠️ [Flow] -> Remote surface NOT ready for sink")
                         }
                     }
                 }
@@ -256,6 +270,7 @@ class CallService : Service() {
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
                 super.onConnectionChange(newState)
                 if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
+                    Log.d(TAG_WEBRTC, "✅ [Flow] -> WebRTC Connected! Cleaning up signaling data.")
                     serviceScope.launch {
                         firebaseClient.removeSelfData()
                     }
@@ -263,6 +278,7 @@ class CallService : Service() {
             }
         }, listener = object : RTCClientImpl.TransferDataToServerCallback {
             override fun onIceGenerated(iceCandidate: IceCandidate) {
+                Log.d(TAG_WEBRTC, "📤 [Signal] -> Sending Local ICE Candidate")
                 serviceScope.launch {
                     firebaseClient.updateParticipantDataModel(
                         participantId = participant, data = SignalDataModel(
@@ -275,6 +291,7 @@ class CallService : Service() {
             }
 
             override fun onOfferGenerated(sessionDescription: SessionDescription) {
+                Log.d(TAG_WEBRTC, "📤 [Signal] -> Sending Local OFFER SDP")
                 serviceScope.launch {
                     firebaseClient.updateParticipantDataModel(
                         participantId = participant, data = SignalDataModel(
@@ -287,6 +304,7 @@ class CallService : Service() {
             }
 
             override fun onAnswerGenerated(sessionDescription: SessionDescription) {
+                Log.d(TAG_WEBRTC, "📤 [Signal] -> Sending Local ANSWER SDP")
                 serviceScope.launch {
                     firebaseClient.updateParticipantDataModel(
                         participantId = participant, data = SignalDataModel(
@@ -302,18 +320,24 @@ class CallService : Service() {
     }
 
     fun startLocalStream(surface: SurfaceViewRenderer) {
+        Log.d(TAG_WEBRTC, "🎥 [Action] -> Starting Local Stream")
         webRTCFactory.prepareLocalStream(surface)
     }
 
     fun initRemoteSurfaceView(remoteSurface: SurfaceViewRenderer) {
+        Log.d(TAG_WEBRTC, "🖼️ [Action] -> Initializing Remote SurfaceView")
         this.remoteSurface = remoteSurface
         webRTCFactory.initSurfaceView(remoteSurface)
         remoteStream?.let {
+            Log.d(TAG_WEBRTC, "📺 [Action] -> Attaching existing Remote Stream to new Surface")
             it.videoTracks[0]?.addSink(remoteSurface)
         }
     }
 
-    fun switchCamera() = webRTCFactory.switchCamera()
+    fun switchCamera() {
+        Log.d(TAG_WEBRTC, "🔄 [Action] -> Switching Camera")
+        webRTCFactory.switchCamera()
+    }
 
     inner class CallServiceBinder : Binder() {
         fun getService(): CallService = this@CallService
