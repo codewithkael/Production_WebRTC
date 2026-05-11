@@ -31,6 +31,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service
+            android:name="com.codewithkael.productionwebrtc.service.CallService"
+            android:foregroundServiceType="mediaProjection|microphone|camera|location"
+            tools:ignore="ForegroundServicePermission" />
+        <receiver
+            android:name="com.codewithkael.productionwebrtc.service.CallBroadcastReceiver"
+            android:directBootAware="true"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.BOOT" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
