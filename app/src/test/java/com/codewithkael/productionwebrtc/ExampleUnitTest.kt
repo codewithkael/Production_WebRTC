@@ -1,4 +1,4 @@
-package com.example.productionwebrtc
+package com.codewithkael.productionwebrtc
 
 import org.junit.Test
 

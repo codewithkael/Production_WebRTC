@@ -1,4 +1,4 @@
-package com.example.productionwebrtc.ui.theme
+package com.codewithkael.productionwebrtc.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

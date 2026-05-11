@@ -1,10 +1,13 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.hiltAndroid)
+    alias(libs.plugins.google.services)
+    alias(libs.plugins.ksp)
 }
 
 android {
-    namespace = "com.example.productionwebrtc"
+    namespace = "com.codewithkael.productionwebrtc"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -12,7 +15,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.productionwebrtc"
+        applicationId = "com.codewithkael.productionwebrtc"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -48,6 +51,20 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+
+    implementation(libs.gson)
+    implementation(libs.webrtc)
+    implementation(libs.hilt.android)
+    implementation(libs.hilt.navigation.compose)
+    ksp(libs.hilt.compiler)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.compose.material.icons.extended)
+
+    // Firebase
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
+    implementation(libs.firebase.database.ktx)
+
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

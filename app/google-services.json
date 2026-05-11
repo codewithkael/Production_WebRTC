@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "893723939308",
+    "firebase_url": "https://productionwebrtc-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "productionwebrtc",
+    "storage_bucket": "productionwebrtc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:893723939308:android:9a6dc145aca46fd6c930c9",
+        "android_client_info": {
+          "package_name": "com.codewithkael.productionwebrtc"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDd4sFqXK0fjAg1rOXAi1K2LiuvkUqCo8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
