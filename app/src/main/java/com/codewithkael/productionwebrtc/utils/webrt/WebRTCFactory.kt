@@ -84,23 +84,27 @@ class WebRTCFactory @Inject constructor(
     }
 
     private fun startLocalVideo(surface: SurfaceViewRenderer) {
-        val surfaceTextureHelper =
-            SurfaceTextureHelper.create(Thread.currentThread().name, eglBaseContext)
+        if (localVideoTrack == null) {
+            val surfaceTextureHelper =
+                SurfaceTextureHelper.create(Thread.currentThread().name, eglBaseContext)
 
-        videoCapture = getVideoCapture()
+            videoCapture = getVideoCapture()
 
-        videoCapture?.initialize(
-            surfaceTextureHelper, surface.context, localVideoSource.capturerObserver
-        )
+            videoCapture?.initialize(
+                surfaceTextureHelper, surface.context, localVideoSource.capturerObserver
+            )
 
-        videoCapture?.startCapture(720, 480, 10)
+            videoCapture?.startCapture(720, 480, 10)
 
-        localVideoTrack =
-            peerConnectionFactory.createVideoTrack("${streamId}_video", localVideoSource)
+            localVideoTrack =
+                peerConnectionFactory.createVideoTrack("${streamId}_video", localVideoSource)
+        }
         localVideoTrack?.addSink(surface)
 
-        localAudioTrack =
-            peerConnectionFactory.createAudioTrack("${streamId}_audio", localAudioSource)
+        if (localAudioTrack == null) {
+            localAudioTrack =
+                peerConnectionFactory.createAudioTrack("${streamId}_audio", localAudioSource)
+        }
     }
 
     fun switchCamera() {

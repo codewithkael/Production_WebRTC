@@ -1,226 +1,81 @@
 package com.codewithkael.productionwebrtc.ui.viewmodel
 
 import android.annotation.SuppressLint
-import android.app.Application
-import android.util.Log
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.codewithkael.productionwebrtc.remote.firebase.FirebaseClient
-import com.codewithkael.productionwebrtc.remote.firebase.SignalDataModel
-import com.codewithkael.productionwebrtc.remote.firebase.SignalDataModelTypes
-import com.codewithkael.productionwebrtc.utils.MyApplication
-import com.codewithkael.productionwebrtc.utils.MyApplication.Companion.TAG
-import com.codewithkael.productionwebrtc.utils.webrt.MyPeerObserver
-import com.codewithkael.productionwebrtc.utils.webrt.RTCAudioManager
-import com.codewithkael.productionwebrtc.utils.webrt.RTCClient
-import com.codewithkael.productionwebrtc.utils.webrt.RTCClientImpl
-import com.codewithkael.productionwebrtc.utils.webrt.WebRTCFactory
-import com.google.gson.Gson
+import com.codewithkael.productionwebrtc.service.CallService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import org.webrtc.IceCandidate
-import org.webrtc.MediaStream
-import org.webrtc.PeerConnection
-import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import javax.inject.Inject
 
-@SuppressLint("StaticFieldLeak")
 @HiltViewModel
-class MainViewModel @Inject constructor(
-    private val firebaseClient: FirebaseClient,
-    private val application: Application,
-    private val webRTCFactory: WebRTCFactory,
-    private val gson: Gson
-) : ViewModel() {
+class MainViewModel @Inject constructor() : ViewModel() {
 
-    private val rtcAudioManager by lazy { RTCAudioManager.create(application) }
-    private var rtcClient: RTCClient? = null
-    private val userID: String = MyApplication.UserID
-    private var remoteSurface: SurfaceViewRenderer? = null
-    private var participantId: String = ""
-    var callState: MutableStateFlow<Boolean> = MutableStateFlow(false)
-        private set
+    @SuppressLint("StaticFieldLeak")
+    private var callService: CallService? = null
+    private var isBound = false
 
-    init {
-        rtcAudioManager.setDefaultAudioDevice(RTCAudioManager.AudioDevice.SPEAKER_PHONE)
-    }
+    private val _callState = MutableStateFlow(false)
+    val callState = _callState.asStateFlow()
 
-    fun permissionsGranted() {
-        firebaseClient.observeIncomingSignals { signalDataModel ->
-            when (signalDataModel.type) {
-                SignalDataModelTypes.INCOMING_CALL -> handleIncomingCall(signalDataModel)
-                SignalDataModelTypes.ACCEPT_CALL -> handleAcceptCall()
-                SignalDataModelTypes.OFFER -> handleReceivedOfferSdp(signalDataModel)
-                SignalDataModelTypes.ANSWER -> handleReceivedAnswerSdp(signalDataModel)
-                SignalDataModelTypes.ICE -> handleReceivedIceCandidate(signalDataModel)
-                null -> Unit
-            }
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as CallService.CallServiceBinder
+            callService = binder.getService()
+            isBound = true
+            observeCallState()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            callService = null
+            isBound = false
         }
     }
 
-    private fun handleAcceptCall() {
-        setupRtcConnection(participantId)?.also {
-            it.offer()
+    fun initService(context: Context) {
+        CallService.startService(context)
+        Intent(context, CallService::class.java).also { intent ->
+            context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    private fun observeCallState() {
+        viewModelScope.launch {
+            callService?.callState?.collectLatest {
+                _callState.emit(it)
+            }
         }
     }
 
     fun sendStartCallSignal(participantId: String) {
-        this.participantId = participantId
-        viewModelScope.launch {
-            callState.emit(true)
-        }
-        viewModelScope.launch {
-            firebaseClient.updateParticipantDataModel(
-                participantId = participantId, data = SignalDataModel(
-                    type = SignalDataModelTypes.INCOMING_CALL, participantId = userID
-                )
-            )
-        }
-    }
-
-    private fun handleIncomingCall(dataModel: SignalDataModel) {
-
-        this.participantId = dataModel.participantId
-        viewModelScope.launch {
-            callState.emit(true)
-        }
-        viewModelScope.launch {
-            firebaseClient.updateParticipantDataModel(
-                participantId = participantId, data = SignalDataModel(
-                    type = SignalDataModelTypes.ACCEPT_CALL, participantId = userID
-                )
-            )
-        }
-    }
-
-    private fun handleReceivedIceCandidate(signalDataModel: SignalDataModel) {
-        runCatching {
-            gson.fromJson(
-                signalDataModel.data.toString(), IceCandidate::class.java
-            )
-        }.onSuccess {
-            rtcClient?.onIceCandidateReceived(it)
-        }.onFailure {
-            Log.d(TAG, "handleReceivedIceCandidate: ${it.message}")
-        }
-    }
-
-    private fun handleReceivedAnswerSdp(signalDataModel: SignalDataModel) {
-        rtcClient?.onRemoteSessionReceived(
-            SessionDescription(
-                SessionDescription.Type.ANSWER, signalDataModel.data.toString()
-            )
-        )
-    }
-
-    private fun handleReceivedOfferSdp(signalDataModel: SignalDataModel) {
-        viewModelScope.launch {
-            callState.emit(true)
-        }
-        setupRtcConnection(participantId)?.also {
-            it.onRemoteSessionReceived(
-                SessionDescription(
-                    SessionDescription.Type.OFFER, signalDataModel.data.toString()
-                )
-            )
-            it.answer()
-
-        }
-    }
-
-    private fun setupRtcConnection(participant: String): RTCClient? {
-        runCatching { rtcClient?.onDestroy() }
-        rtcClient = null
-        rtcClient = webRTCFactory.createRTCClient(observer = object : MyPeerObserver() {
-            override fun onIceCandidate(p0: IceCandidate?) {
-                super.onIceCandidate(p0)
-                p0?.let {
-                    rtcClient?.onLocalIceCandidateGenerated(it)
-                }
-            }
-
-            override fun onAddStream(p0: MediaStream?) {
-                super.onAddStream(p0)
-                p0?.let {
-                    runCatching {
-                        Log.d(TAG, "onAddStream: $it")
-                        remoteSurface?.let { surface ->
-                            it.videoTracks[0]?.addSink(surface)
-                        } ?: run {
-                            Log.d(TAG, "onAddStream: nulle surface")
-                        }
-                    }
-                }
-            }
-
-            override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
-                super.onConnectionChange(newState)
-                if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
-                    viewModelScope.launch {
-                        firebaseClient.removeSelfData()
-                    }
-                }
-            }
-        }, listener = object : RTCClientImpl.TransferDataToServerCallback {
-            override fun onIceGenerated(iceCandidate: IceCandidate) {
-                viewModelScope.launch {
-                    firebaseClient.updateParticipantDataModel(
-                        participantId = participant, data = SignalDataModel(
-                            type = SignalDataModelTypes.ICE,
-                            data = gson.toJson(iceCandidate),
-                            participantId = userID
-                        )
-                    )
-                }
-            }
-
-            override fun onOfferGenerated(sessionDescription: SessionDescription) {
-                viewModelScope.launch {
-                    firebaseClient.updateParticipantDataModel(
-                        participantId = participant, data = SignalDataModel(
-                            type = SignalDataModelTypes.OFFER,
-                            data = sessionDescription.description,
-                            participantId = userID
-                        )
-                    )
-                }
-            }
-
-            override fun onAnswerGenerated(sessionDescription: SessionDescription) {
-                viewModelScope.launch {
-                    firebaseClient.updateParticipantDataModel(
-                        participantId = participant, data = SignalDataModel(
-                            type = SignalDataModelTypes.ANSWER,
-                            data = sessionDescription.description,
-                            participantId = userID
-                        )
-                    )
-                }
-            }
-
-        })
-        return rtcClient
+        callService?.sendStartCallSignal(participantId)
     }
 
     fun startLocalStream(surface: SurfaceViewRenderer) {
-        webRTCFactory.prepareLocalStream(surface)
+        callService?.startLocalStream(surface)
     }
 
     fun initRemoteSurfaceView(remoteSurface: SurfaceViewRenderer) {
-        this.remoteSurface = remoteSurface
-        webRTCFactory.initSurfaceView(remoteSurface)
+        callService?.initRemoteSurfaceView(remoteSurface)
     }
 
-    fun switchCamera() = webRTCFactory.switchCamera()
+    fun switchCamera() {
+        callService?.switchCamera()
+    }
 
-    override fun onCleared() {
-        super.onCleared()
-        remoteSurface?.release()
-        remoteSurface = null
-        firebaseClient.clear()
-        webRTCFactory.onDestroy()
-        rtcClient?.onDestroy()
+    fun unbindService(context: Context) {
+        if (isBound) {
+            context.unbindService(serviceConnection)
+            isBound = false
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.codewithkael.productionwebrtc.ui.screens
 
 import android.Manifest
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,19 +41,28 @@ fun MainScreen() {
     ) { permissions ->
         if (!permissions.all { it.value }) {
             Toast.makeText(
-                context, "Camera and Microphone permissions are required", Toast.LENGTH_SHORT
+                context, "Camera, Microphone and Notification permissions are required", Toast.LENGTH_SHORT
             ).show()
         } else {
-            viewModel.permissionsGranted()
+            viewModel.initService(context)
         }
     }
 
     LaunchedEffect(Unit) {
-        permissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA
-            )
+        val permissions = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CAMERA
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        permissionLauncher.launch(permissions.toTypedArray())
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.unbindService(context)
+        }
     }
 
     Column(
