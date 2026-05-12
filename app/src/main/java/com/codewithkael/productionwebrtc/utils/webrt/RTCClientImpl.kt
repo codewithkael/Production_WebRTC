@@ -39,11 +39,11 @@ class RTCClientImpl(
                     override fun onSetSuccess() {
                         super.onSetSuccess()
                         Log.d(TAG, "🏁 [Action] -> Local Description Set (OFFER)")
+                        desc?.let {
+                            transferListener.onOfferGenerated(desc)
+                        }
                     }
                 }, desc)
-                desc?.let {
-                    transferListener.onOfferGenerated(desc)
-                }
             }
         }, constraints)
     }
