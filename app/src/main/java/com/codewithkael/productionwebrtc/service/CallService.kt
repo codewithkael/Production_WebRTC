@@ -279,7 +279,7 @@ class CallService : Service() {
             connectionState.emit(ConnectionState.CONNECTING)
         }
         serviceScope.launch {
-            firebaseClient.updateParticipantDataModel(
+            firebaseClient.sendSignal(
                 participantId = participantId, data = SignalDataModel(
                     type = SignalDataModelTypes.INCOMING_CALL, participantId = userID
                 )
@@ -297,7 +297,7 @@ class CallService : Service() {
             connectionState.emit(ConnectionState.CONNECTING)
         }
         serviceScope.launch {
-            firebaseClient.updateParticipantDataModel(
+            firebaseClient.sendSignal(
                 participantId = participantId, data = SignalDataModel(
                     type = SignalDataModelTypes.ACCEPT_CALL, participantId = userID
                 )
@@ -403,7 +403,7 @@ class CallService : Service() {
         }, listener = object : RTCClientImpl.TransferDataToServerCallback {
             override fun onIceGenerated(iceCandidate: IceCandidate) {
                 serviceScope.launch {
-                    firebaseClient.updateParticipantDataModel(
+                    firebaseClient.sendSignal(
                         participantId = participant, data = SignalDataModel(
                             type = SignalDataModelTypes.ICE,
                             data = gson.toJson(iceCandidate),
@@ -415,7 +415,7 @@ class CallService : Service() {
 
             override fun onOfferGenerated(sessionDescription: SessionDescription) {
                 serviceScope.launch {
-                    firebaseClient.updateParticipantDataModel(
+                    firebaseClient.sendSignal(
                         participantId = participant, data = SignalDataModel(
                             type = SignalDataModelTypes.OFFER,
                             data = sessionDescription.description,
@@ -427,7 +427,7 @@ class CallService : Service() {
 
             override fun onAnswerGenerated(sessionDescription: SessionDescription) {
                 serviceScope.launch {
-                    firebaseClient.updateParticipantDataModel(
+                    firebaseClient.sendSignal(
                         participantId = participant, data = SignalDataModel(
                             type = SignalDataModelTypes.ANSWER,
                             data = sessionDescription.description,

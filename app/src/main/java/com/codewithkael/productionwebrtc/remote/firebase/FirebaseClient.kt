@@ -2,7 +2,9 @@ package com.codewithkael.productionwebrtc.remote.firebase
 
 import android.util.Log
 import com.codewithkael.productionwebrtc.utils.MyApplication
+import com.google.firebase.database.ChildEventListener
 import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
@@ -22,28 +24,37 @@ class FirebaseClient @Inject constructor(
     val userId = MyApplication.UserID
 
     fun observeIncomingSignals(callback: (SignalDataModel) -> Unit) {
-        database.child(FirebaseFieldNames.USERS).child(userId).child(FirebaseFieldNames.DATA)
-            .addValueEventListener(object : MyValueEventListener() {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    super.onDataChange(snapshot)
+        database.child(FirebaseFieldNames.USERS).child(userId).child(FirebaseFieldNames.SIGNALS)
+            .addChildEventListener(object : ChildEventListener {
+                override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
                     runCatching {
                         gson.fromJson(snapshot.value.toString(), SignalDataModel::class.java)
-                    }.onSuccess {
-                        if (it != null) callback(it)
+                    }.onSuccess { signal ->
+                        if (signal != null) {
+                            callback(signal)
+                            // Proactive cleanup: remove signal after receiving
+                            snapshot.ref.removeValue()
+                        }
                     }.onFailure {
-                        Log.d(MyApplication.TAG, "onDataChange: ${it.message}")
+                        Log.d(MyApplication.TAG, "onChildAdded error: ${it.message}")
                     }
                 }
+
+                override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) {}
+                override fun onChildRemoved(snapshot: DataSnapshot) {}
+                override fun onChildMoved(snapshot: DataSnapshot, previousChildName: String?) {}
+                override fun onCancelled(error: DatabaseError) {}
             })
     }
 
-    suspend fun updateParticipantDataModel(participantId: String, data: SignalDataModel) {
-        database.child(FirebaseFieldNames.USERS).child(participantId).child(FirebaseFieldNames.DATA)
+    suspend fun sendSignal(participantId: String, data: SignalDataModel) {
+        database.child(FirebaseFieldNames.USERS).child(participantId).child(FirebaseFieldNames.SIGNALS)
+            .push()
             .setValue(gson.toJson(data)).await()
     }
 
     suspend fun removeSelfData() {
-        database.child(FirebaseFieldNames.USERS).child(userId).child(FirebaseFieldNames.DATA)
+        database.child(FirebaseFieldNames.USERS).child(userId).child(FirebaseFieldNames.SIGNALS)
             .removeValue().await()
     }
 
