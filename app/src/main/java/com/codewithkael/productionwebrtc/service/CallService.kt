@@ -30,6 +30,8 @@ import com.codewithkael.productionwebrtc.utils.webrt.MyPeerObserver
 import com.codewithkael.productionwebrtc.utils.webrt.RTCAudioManager
 import com.codewithkael.productionwebrtc.utils.webrt.RTCClient
 import com.codewithkael.productionwebrtc.utils.webrt.RTCClientImpl
+import com.codewithkael.productionwebrtc.utils.webrt.RTCStatsModel
+import com.codewithkael.productionwebrtc.utils.webrt.RTCStatsParser
 import com.codewithkael.productionwebrtc.utils.webrt.WebRTCFactory
 import com.google.gson.Gson
 import dagger.hilt.android.AndroidEntryPoint
@@ -71,9 +73,12 @@ class CallService : Service() {
     private var fallbackReconnectionJob: Job? = null
     private var wasEstablished = false
     private var retryCount = 0
+    private val statsParser = RTCStatsParser()
+    private var statsJob: Job? = null
 
     val callState: MutableStateFlow<Boolean> = MutableStateFlow(false)
     val connectionState: MutableStateFlow<ConnectionState> = MutableStateFlow(ConnectionState.IDLE)
+    val statsFlow: MutableStateFlow<RTCStatsModel?> = MutableStateFlow(null)
 
     //service section
     private lateinit var mainNotification: NotificationCompat.Builder
@@ -386,15 +391,18 @@ class CallService : Service() {
                         retryCount = 0
                         reconnectionJob?.cancel()
                         fallbackReconnectionJob?.cancel()
+                        startStatsPolling()
                     }
                     PeerConnection.PeerConnectionState.DISCONNECTED -> {
                         Log.w(TAG_WEBRTC, "⚠️ [Persistence] -> Connection Disconnected. Starting Reconnection Timer.")
                         fallbackReconnectionJob?.cancel()
+                        stopStatsPolling()
                         startReconnectionTimer()
                     }
                     PeerConnection.PeerConnectionState.FAILED -> {
                         Log.e(TAG_WEBRTC, "❌ [Persistence] -> Connection Failed. Triggering immediate ICE Restart.")
                         fallbackReconnectionJob?.cancel()
+                        stopStatsPolling()
                         startIceRestart()
                     }
                     else -> Unit
@@ -438,6 +446,24 @@ class CallService : Service() {
             }
         })
         return rtcClient
+    }
+
+    private fun startStatsPolling() {
+        statsJob?.cancel()
+        statsJob = serviceScope.launch {
+            while (connectionState.value == ConnectionState.CONNECTED) {
+                rtcClient?.peerConnection?.getStats { report ->
+                    statsFlow.value = statsParser.parse(report)
+                }
+                delay(2000)
+            }
+        }
+    }
+
+    private fun stopStatsPolling() {
+        statsJob?.cancel()
+        statsJob = null
+        statsFlow.value = null
     }
 
     private fun startReconnectionTimer() {

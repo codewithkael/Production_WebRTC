@@ -41,6 +41,7 @@ fun MainScreen() {
     val viewModel: MainViewModel = hiltViewModel()
     val callState by viewModel.callState.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
+    val rtcStats by viewModel.rtcStats.collectAsState()
     val context = LocalContext.current
 
     // ---------- Permissions ----------
@@ -104,6 +105,10 @@ fun MainScreen() {
                     onRemoteReady = { viewModel.initRemoteSurfaceView(it) },
                     onLocalReady = { viewModel.startLocalStream(it) })
 
+                rtcStats?.let {
+                    StatsOverlay(it)
+                }
+
                 if (connectionState == ConnectionState.CONNECTING || connectionState == ConnectionState.RECONNECTING) {
                     val statusText = if (connectionState == ConnectionState.CONNECTING) "Connecting..." else "Reconnecting..."
                     Box(
@@ -142,5 +147,38 @@ fun MainScreen() {
                 .weight(1f)
                 .padding(horizontal = 5.dp, vertical = 10.dp)
         )
+    }
+}
+
+@Composable
+fun StatsOverlay(stats: com.codewithkael.productionwebrtc.utils.webrt.RTCStatsModel) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        contentAlignment = Alignment.TopStart
+    ) {
+        Column(
+            modifier = Modifier
+                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                .padding(8.dp)
+        ) {
+            Text("📊 Live Metrics", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            MetricRow("Bitrate", "${stats.bitrate.toInt()} kbps")
+            MetricRow("Packet Loss", "${stats.packetLoss}")
+            MetricRow("RTT", "${stats.rtt.toInt()} ms")
+            MetricRow("Jitter", "%.3f s".format(stats.jitter))
+            MetricRow("FPS", "${stats.frameRate}")
+        }
+    }
+}
+
+@Composable
+fun MetricRow(label: String, value: String) {
+    androidx.compose.foundation.layout.Row(
+        modifier = Modifier.padding(vertical = 2.dp)
+    ) {
+        Text("$label: ", color = Color.LightGray, fontSize = 10.sp)
+        Text(value, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
     }
 }

@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.codewithkael.productionwebrtc.service.CallService
 import com.codewithkael.productionwebrtc.service.ConnectionState
+import com.codewithkael.productionwebrtc.utils.webrt.RTCStatsModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +31,9 @@ class MainViewModel @Inject constructor() : ViewModel() {
 
     private val _connectionState = MutableStateFlow(ConnectionState.IDLE)
     val connectionState = _connectionState.asStateFlow()
+
+    private val _rtcStats = MutableStateFlow<RTCStatsModel?>(null)
+    val rtcStats = _rtcStats.asStateFlow()
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -61,6 +65,11 @@ class MainViewModel @Inject constructor() : ViewModel() {
         viewModelScope.launch {
             callService?.connectionState?.collectLatest {
                 _connectionState.emit(it)
+            }
+        }
+        viewModelScope.launch {
+            callService?.statsFlow?.collectLatest {
+                _rtcStats.emit(it)
             }
         }
     }
