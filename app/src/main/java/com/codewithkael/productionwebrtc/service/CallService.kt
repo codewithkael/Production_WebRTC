@@ -8,6 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -74,6 +78,17 @@ class CallService : Service() {
     //service section
     private lateinit var mainNotification: NotificationCompat.Builder
     private lateinit var notificationManager: NotificationManager
+    private lateinit var connectivityManager: ConnectivityManager
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            super.onAvailable(network)
+            Log.d(TAG_WEBRTC, "🌐 [Network] -> Available. Proactively triggering restart if needed.")
+            if (callState.value && connectionState.value != ConnectionState.CONNECTED) {
+                startIceRestart()
+            }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG_WEBRTC, "⚙️ [Service] -> onStartCommand action: ${intent?.action}")
@@ -93,12 +108,14 @@ class CallService : Service() {
             isServiceRunning = true
             startServiceWithNotification()
             observeIncomingSignals()
+            registerNetworkCallback()
         }
     }
 
     private fun handleStopService() {
         Log.d(TAG_WEBRTC, "🛑 [Service] -> Stopping CallService...")
         isServiceRunning = false
+        unregisterNetworkCallback()
         rtcClient?.onDestroy()
         rtcClient = null
         retryCount = 0
@@ -116,6 +133,7 @@ class CallService : Service() {
         super.onCreate()
         Log.d(TAG_WEBRTC, "✨ [Service] -> CallService Created")
         notificationManager = getSystemService(NotificationManager::class.java)
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
         createNotifications()
         rtcAudioManager.setDefaultAudioDevice(RTCAudioManager.AudioDevice.SPEAKER_PHONE)
     }
@@ -158,6 +176,17 @@ class CallService : Service() {
 
             Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun registerNetworkCallback() {
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        connectivityManager.registerNetworkCallback(request, networkCallback)
+    }
+
+    private fun unregisterNetworkCallback() {
+        runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
     }
 
     private fun startServiceWithNotification() {
