@@ -1,7 +1,7 @@
 # Production WebRTC Android
 
-**YouTube Channel:** [codewithkael](https://www.youtube.com/@codewithkael)  
-**Tutorial Playlist:** [YouTube Playlist Link Placeholder]
+**YouTube Channel:** [Codewithkael](https://www.youtube.com/@codewithkael)  
+**Tutorial Playlist:** [Tutorial link](https://www.youtube.com/playlist?list=PLFelST8t9nqhq_81H5D2zhp17jB5rnERI)
 
 ---
 
