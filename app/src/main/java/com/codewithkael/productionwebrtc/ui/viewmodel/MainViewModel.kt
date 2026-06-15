@@ -35,6 +35,9 @@ class MainViewModel @Inject constructor() : ViewModel() {
     private val _rtcStats = MutableStateFlow<RTCStatsModel?>(null)
     val rtcStats = _rtcStats.asStateFlow()
 
+    private val _isBlurEnabled = MutableStateFlow(false)
+    val isBlurEnabled = _isBlurEnabled.asStateFlow()
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as CallService.CallServiceBinder
@@ -88,6 +91,11 @@ class MainViewModel @Inject constructor() : ViewModel() {
 
     fun switchCamera() {
         callService?.switchCamera()
+    }
+
+    fun toggleBlur(enabled: Boolean) {
+        _isBlurEnabled.value = enabled
+        callService?.toggleBlur(enabled)
     }
 
     fun unbindService(context: Context) {

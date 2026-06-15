@@ -59,6 +59,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.ai.video.processor)
 
     // Firebase
     implementation(platform(libs.firebase.bom))

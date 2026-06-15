@@ -510,6 +510,8 @@ class CallService : Service() {
 
     fun switchCamera() = webRTCFactory.switchCamera()
 
+    fun toggleBlur(enabled: Boolean) = webRTCFactory.toggleBlur(enabled)
+
     inner class CallServiceBinder : Binder() {
         fun getService(): CallService = this@CallService
     }

@@ -2,6 +2,9 @@ package com.codewithkael.productionwebrtc.utils.webrt
 
 import android.app.Application
 import android.content.Context
+import com.codewithkael.aivideoprocessor.capture.AiVideoCapturerObserver
+import com.codewithkael.aivideoprocessor.config.AiVideoProcessorConfig
+import com.codewithkael.aivideoprocessor.config.blur.BlurBackgroundConfig
 import com.codewithkael.productionwebrtc.utils.MyApplication
 import com.codewithkael.productionwebrtc.utils.webrt.IceServers.Companion.getIceServers
 import org.webrtc.AudioTrack
@@ -36,6 +39,7 @@ class WebRTCFactory @Inject constructor(
     private var localAudioTrack: AudioTrack? = null
     private var localVideoTrack: VideoTrack? = null
 
+    private var aiVideoCapturerObserver: AiVideoCapturerObserver? = null
 
     private val iceServer = getIceServers()
 
@@ -94,8 +98,14 @@ class WebRTCFactory @Inject constructor(
 
             videoCapture = getVideoCapture()
 
+            aiVideoCapturerObserver = AiVideoCapturerObserver(
+                application,
+                localVideoSource.capturerObserver,
+                AiVideoProcessorConfig(blurBackground = BlurBackgroundConfig(enabled = false))
+            )
+
             videoCapture?.initialize(
-                surfaceTextureHelper, surface.context, localVideoSource.capturerObserver
+                surfaceTextureHelper, surface.context, aiVideoCapturerObserver
             )
 
             videoCapture?.startCapture(720, 480, 10)
@@ -109,6 +119,12 @@ class WebRTCFactory @Inject constructor(
             localAudioTrack =
                 peerConnectionFactory.createAudioTrack("${streamId}_audio", localAudioSource)
         }
+    }
+
+    fun toggleBlur(enabled: Boolean) {
+        aiVideoCapturerObserver?.updateConfig(
+            AiVideoProcessorConfig(blurBackground = BlurBackgroundConfig(enabled = enabled))
+        )
     }
 
     fun switchCamera() {
