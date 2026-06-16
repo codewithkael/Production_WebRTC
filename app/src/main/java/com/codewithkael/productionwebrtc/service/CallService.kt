@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import org.webrtc.IceCandidate
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
+import org.webrtc.RtpTransceiver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import javax.inject.Inject
@@ -321,12 +322,22 @@ class CallService : Service() {
     }
 
     private fun handleReceivedAnswerSdp(signalDataModel: SignalDataModel) {
+        val sdp = signalDataModel.data
+        if (sdp.isNullOrEmpty()) {
+            Log.e(TAG_WEBRTC, "❌ [Signal] -> Received ANSWER with empty SDP!")
+            return
+        }
         rtcClient?.onRemoteSessionReceived(
-            SessionDescription(SessionDescription.Type.ANSWER, signalDataModel.data.toString())
+            SessionDescription(SessionDescription.Type.ANSWER, sdp)
         )
     }
 
     private fun handleReceivedOfferSdp(signalDataModel: SignalDataModel) {
+        val sdp = signalDataModel.data
+        if (sdp.isNullOrEmpty()) {
+            Log.e(TAG_WEBRTC, "❌ [Signal] -> Received OFFER with empty SDP!")
+            return
+        }
         this.participantId = signalDataModel.participantId
         serviceScope.launch {
             callState.emit(true)
@@ -337,12 +348,9 @@ class CallService : Service() {
         }
 
         val client = rtcClient ?: setupRtcConnection(participantId)
-        client?.also {
-            it.onRemoteSessionReceived(
-                SessionDescription(SessionDescription.Type.OFFER, signalDataModel.data.toString())
-            )
-            it.answer()
-        }
+        client?.onRemoteSessionReceived(
+            SessionDescription(SessionDescription.Type.OFFER, sdp)
+        )
     }
 
     private fun setupRtcConnection(participant: String): RTCClient? {
@@ -361,11 +369,24 @@ class CallService : Service() {
                 super.onAddStream(stream)
                 stream?.let {
                     remoteStream = it
-                    runCatching {
-                        Log.d(TAG_WEBRTC, "📺 [Flow] -> Remote MediaStream received: ${it.id}")
-                        remoteSurface?.let { surface ->
-                            it.videoTracks[0]?.addSink(surface)
+                    if (it.videoTracks.isNotEmpty()) {
+                        runCatching {
+                            Log.d(TAG_WEBRTC, "📺 [Flow] -> Remote MediaStream received: ${it.id}")
+                            remoteSurface?.let { surface ->
+                                it.videoTracks[0]?.addSink(surface)
+                            }
                         }
+                    }
+                }
+            }
+
+            override fun onTrack(transceiver: RtpTransceiver?) {
+                super.onTrack(transceiver)
+                val track = transceiver?.receiver?.track()
+                if (track is org.webrtc.VideoTrack) {
+                    Log.d(TAG_WEBRTC, "📺 [Flow] -> Remote VideoTrack received via onTrack: ${track.id()}")
+                    remoteSurface?.let { surface ->
+                        track.addSink(surface)
                     }
                 }
             }
@@ -450,12 +471,16 @@ class CallService : Service() {
 
     private fun startStatsPolling() {
         statsJob?.cancel()
+        statsParser.reset()
         statsJob = serviceScope.launch {
             while (connectionState.value == ConnectionState.CONNECTED) {
                 rtcClient?.peerConnection?.getStats { report ->
-                    statsFlow.value = statsParser.parse(report)
+                    serviceScope.launch(Dispatchers.Default) {
+                        val model = statsParser.parse(report)
+                        statsFlow.value = model
+                    }
                 }
-                delay(2000)
+                delay(1000)
             }
         }
     }
@@ -483,7 +508,7 @@ class CallService : Service() {
         fallbackReconnectionJob?.cancel()
         fallbackReconnectionJob = serviceScope.launch {
             Log.d(TAG_WEBRTC, "⏱️ [Persistence] -> Fallback timer started (15s).")
-            delay(15000)
+            delay(25000)
             if (connectionState.value == ConnectionState.CONNECTING ||
                 connectionState.value == ConnectionState.RECONNECTING
             ) {

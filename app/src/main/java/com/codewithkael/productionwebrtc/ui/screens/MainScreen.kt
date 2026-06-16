@@ -194,7 +194,6 @@ fun StatsOverlay(stats: com.codewithkael.productionwebrtc.utils.webrt.RTCStatsMo
         ) {
             Text("📊 Live Metrics", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             MetricRow("Bitrate", "${stats.bitrate.toInt()} kbps")
-            MetricRow("Packet Loss", "${stats.packetLoss}")
             MetricRow("RTT", "${stats.rtt.toInt()} ms")
             MetricRow("Jitter", "%.3f s".format(stats.jitter))
             MetricRow("FPS", "${stats.frameRate}")

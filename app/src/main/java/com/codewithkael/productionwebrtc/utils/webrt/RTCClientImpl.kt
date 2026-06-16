@@ -73,6 +73,10 @@ class RTCClientImpl(
                 super.onSetSuccess()
                 Log.d(TAG, "🏁 [Action] -> Remote Description Set Successfully")
                 drainIceCandidates()
+                // Automatically answer if it's an offer
+                if (sessionDescription.type == SessionDescription.Type.OFFER) {
+                    answer()
+                }
             }
         }, sessionDescription)
     }
